@@ -47,6 +47,8 @@ class Fiber {
         this.dom = props.dom;//真实dom
         this.effectTag = props.effectTag;//渲染类型
         this.alternate = props.alternate;//指向另外一颗fiber树上的影子节点
+        this.stateHooks = null;
+        this.effectHooks = null;
     }
 }
 
@@ -70,19 +72,26 @@ function taskLoop(deadline) {
     let shouldYield = false
     while (!shouldYield && nextTask) {
         nextTask = taskOfUnit(nextTask)
+        //找到结束位置
+        if (curRootTask?.sibling?.type === nextTask?.type) {
+            nextTask = undefined
+        }
         shouldYield = deadline.timeRemaining() < 1
     }
     if (nextTask)
         requestIdleCallback(taskLoop)
     if (!nextTask) {
-        deletions.forEach((task) => {
-            commitDeletion(task)
-        })
-        deletions = []
-        //统一挂载到真实dom上（更新视图）
-        commitWork(curRootTask.child)
-        commitEffectHooks()
+        commitRoot()
     }
+}
+function commitRoot() {
+    deletions.forEach((task) => {
+        commitDeletion(task)
+    })
+    deletions = []
+    //统一挂载到真实dom上（更新视图）
+    commitWork(curRootTask.child)
+    commitEffectHooks()
 }
 function commitWork(task) {
     if (!task) return
@@ -125,29 +134,21 @@ function initChildren(task, children) {
     let prevChild = null
     children.forEach((child, index) => {
         const isSameType = oldChildTask && oldChildTask.type === child.type
-        let childTask = null;
+        let childTask = new Fiber({
+            type: child.type,
+            props: child.props,
+            child: null,
+            sibling: null,
+            parent: task,
+            dom: null,
+        })
         if (isSameType) {
-            childTask = new Fiber({
-                type: child.type,
-                props: child.props,
-                child: null,
-                sibling: null,
-                parent: task,
-                dom: oldChildTask.dom,
-                effectTag: "update",
-                alternate: oldChildTask
-            })
+            childTask.dom = oldChildTask.dom
+            childTask.effectTag = "update"
+            childTask.alternate = oldChildTask
         } else {
             if (child) {
-                childTask = new Fiber({
-                    type: child.type,
-                    props: child.props,
-                    child: null,//第一个子任务
-                    sibling: null,//右边第一个兄弟 
-                    parent: task,
-                    dom: null,//真实dom
-                    effectTag: "placement",
-                })
+                childTask.effectTag = "placement"
             }
             if (oldChildTask) {
                 deletions.push(oldChildTask)
