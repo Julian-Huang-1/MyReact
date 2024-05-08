@@ -1,3 +1,4 @@
-import React from "../core/React"
-const App = <div>asd</div>
-console.log(App);
+import ReactDom from "../core/ReactDom.js";
+import React from "../core/React.js"
+import { App } from "./App.jsx";
+ReactDom.createRoot(document.querySelector("#root")).render(<App />)
