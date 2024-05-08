@@ -50,9 +50,7 @@ class Fiber {
     }
 }
 
-
-
-
+let FnTask; //用来保存函数Fiber节点
 let curRootTask;//用来保存Fiber树的根节点
 let nextTask = null
 function render(vel, container) {
@@ -67,8 +65,6 @@ function render(vel, container) {
     curRootTask = nextTask
     requestIdleCallback(taskLoop)//注册任务
 }
-
-
 function taskLoop(deadline) {
     let shouldYield = false
     while (!shouldYield && nextTask) {
@@ -78,8 +74,13 @@ function taskLoop(deadline) {
     if (nextTask)
         requestIdleCallback(taskLoop)
     if (!nextTask) {
+        deletions.forEach((task) => {
+            commitDeletion(task)
+        })
+        deletions = []
         //统一挂载到真实dom上（更新视图）
         commitWork(curRootTask.child)
+        commitEffectHooks()
     }
 }
 function commitWork(task) {
@@ -98,30 +99,30 @@ function commitWork(task) {
     commitWork(task.child)
     commitWork(task.sibling)
 }
-function taskOfUnit(task) {
-    // typeof task.type === "function" && console.log(task.id, task.alternate?.id);
-    const ifFnComponent = typeof task.type === "function"
-    if (!ifFnComponent) {
-        if (!task.dom) {
-            //创建真实dom
-            const dom = task.type === "TEXT_ELEMENT"
-                ? document.createTextNode("")
-                : document.createElement(task.type)
-            task.dom = dom
-
-            updateProps(dom, task.props, {})
-        }
+function updateFnComponent(task) {
+    //每次函数组件初始化 重置
+    FnTask = task
+    stateHooks = []
+    stateHookIndex = 0
+    const children = [task.type(task.props)]
+    initChildren(task, children)
+}
+function updateHostComponent(task) {
+    if (!task.dom) {
+        //创建真实dom
+        createDom(task)
+        updateProps(task.dom, task.props, {})
     }
-    let oldChildTask = task.alternate?.child
+    const children = task.props.children
+    initChildren(task, children)
+}
 
+function initChildren(task, children) {
+    let oldChildTask = task.alternate?.child
     // 初始化子节点
-    const children = ifFnComponent
-        ? [task.type(task.props)]
-        : task.props.children
     let prevChild = null
     children.forEach((child, index) => {
         const isSameType = oldChildTask && oldChildTask.type === child.type
-
         let childTask = null;
         if (isSameType) {
             childTask = new Fiber({
@@ -169,6 +170,23 @@ function taskOfUnit(task) {
         deletions.push(oldChildTask)
         oldChildTask = oldChildTask.sibling
     }
+}
+
+function createDom(task) {
+    const dom = task.type === "TEXT_ELEMENT"
+        ? document.createTextNode("")
+        : document.createElement(task.type)
+    task.dom = dom
+}
+function taskOfUnit(task) {
+    // typeof task.type === "function" && console.log(task.id, task.alternate?.id);
+    const ifFnComponent = typeof task.type === "function"
+    if (ifFnComponent) {
+        updateFnComponent(task)
+    } else {
+        updateHostComponent(task)
+    }
+
     if (task.child) return task.child
     if (task.sibling) return task.sibling
 
@@ -177,8 +195,8 @@ function taskOfUnit(task) {
         if (parent.sibling) return parent.sibling
         else parent = parent.parent
     }
-    // return task.parent?.sibling
 }
+
 function updateProps(dom, newProps, prevProps) {
     Object.keys(prevProps).forEach((key) => {
         if (key !== "children") {
@@ -203,10 +221,104 @@ function updateProps(dom, newProps, prevProps) {
     })
 }
 
+let effectHooks;
+function useEffect(callback, deps) {
+    const effectHook = {
+        callback,
+        deps,
+        cleanup: undefined
+    }
+
+    effectHooks.push(effectHook)
+    FnTask.effectHooks = effectHooks
+}
+function commitEffectHooks() {
+    function run(task) {
+        if (!task) return
+        if (!task.alternate) {
+            task.effectHooks?.forEach((effectHook) => {
+                effectHook.cleanup = effectHook.callback()
+            })
+        } else {
+            task.effectHooks?.forEach((effectHook, index) => {
+                const oldEffectHook = task.alternate?.effectHooks[index]
+                const needUpdate = oldEffectHook.deps.some((oldDep, i) => {
+                    return oldDep !== effectHook.deps[i]
+                })
+
+                needUpdate && (effectHook.cleanup = effectHook.callback())
+            })
+        }
+        run(task.child)
+        run(task.sibling)
+    }
+
+    function runCleanup(task) {
+        if (!task) return
+        task.alternate?.effectHooks?.forEach((effectHook) => {
+            if (effectHook.deps.length > 0) {
+                // console.log("taskid:", task.id);
+                effectHook.cleanup && effectHook.cleanup()
+            }
+        })
+        runCleanup(task.child)
+        runCleanup(task.sibling)
+    }
+    runCleanup(curRootTask)
+    run(curRootTask)
+}
+function commitDeletion(task) {
+    if (task.dom) {
+        let parent = task.parent
+        while (!parent.dom) {
+            parent = parent.parent
+        }
+        parent.dom.removeChild(task.dom)
+    } else {
+        commitDeletion(task.child)
+    }
+}
+
+let stateHooks;
+let stateHookIndex;
+function useState(initial) {
+    let currentTask = FnTask
+    let oldHook = currentTask.alternate?.stateHooks[stateHookIndex]
+    const stateHook = {
+        state: oldHook ? oldHook.state : initial,
+        queue: oldHook ? oldHook.queue : []
+    }
+
+    stateHook.queue.forEach((action) => {
+        stateHook.state = typeof action === "function" ? action(stateHook.state) : action
+    })
+    stateHook.queue = []
+    stateHooks.push(stateHook)
+    stateHookIndex++
+    currentTask.stateHooks = stateHooks
+
+    function setState(action) {
+        const eagerState = typeof action === "function" ? action(stateHook.state) : action
+        if (eagerState === stateHook.state) return
+        stateHook.queue.push(action)
+        nextTask = new Fiber({
+            ...currentTask,
+            alternate: currentTask,
+        })
+
+        curRootTask = nextTask
+        requestIdleCallback(taskLoop)
+
+    }
+
+    return [stateHook.state, setState]
+}
 
 const React = {
     createElement,
-    render
+    render,
+    useState,
+    useEffect
 }
 
 export default React

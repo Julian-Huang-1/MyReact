@@ -1,5 +1,12 @@
 import React from "../core/React.js"
 
+
 export function App() {
-    return <div>App</div>
+    const [count, setCount] = React.useState(10)
+    function handle() {
+        setCount((c) => c + 1)
+    }
+    return <div>{count}
+        <button onClick={handle}>click</button>
+    </div>
 }
