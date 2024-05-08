@@ -6,7 +6,11 @@ export function App() {
     function handle() {
         setCount((c) => c + 1)
     }
+    React.useEffect(() => {
+        console.log("init");
+    }, [])
     return <div>{count}
         <button onClick={handle}>click</button>
     </div>
 }
+

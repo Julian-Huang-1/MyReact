@@ -53,6 +53,7 @@ class Fiber {
 let FnTask; //用来保存函数Fiber节点
 let curRootTask;//用来保存Fiber树的根节点
 let nextTask = null
+let deletions = []
 function render(vel, container) {
     nextTask = new Fiber({
         type: null,
@@ -102,6 +103,7 @@ function commitWork(task) {
 function updateFnComponent(task) {
     //每次函数组件初始化 重置
     FnTask = task
+    effectHooks = []
     stateHooks = []
     stateHookIndex = 0
     const children = [task.type(task.props)]
