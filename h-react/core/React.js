@@ -99,7 +99,7 @@ function commitWork(task) {
     while (!parent.dom) {
         parent = parent.parent
     }
-    if (task.effectTag === "update") {
+    if (task.effectTag === "update" && task.dom) {
         updateProps(task.dom, task.props, task.alternate?.props)
     } else if (task.effectTag === "placement") {
         if (task.dom) {
